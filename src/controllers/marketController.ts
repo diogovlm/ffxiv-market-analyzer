@@ -1,7 +1,9 @@
 import { Request, Response } from "express";
-import axios from "axios";
-
-const UNIVERSALIS_API_URL = "https://universalis.app/api/v2";
+import {
+  fetchMarketData,
+  fetchAggregatedMarketData,
+} from "../services/marketService";
+import { handleError } from "../utils/errorHandler";
 
 export const getDataCenterMarketData = async (
   req: Request,
@@ -9,21 +11,14 @@ export const getDataCenterMarketData = async (
 ): Promise<void> => {
   try {
     const { itemId, dataCenter } = req.params;
-
     if (!itemId || !dataCenter) {
       res.status(400).json({ error: "Item ID and Data Center are required" });
       return;
     }
-    const response = await axios.get(
-      `${UNIVERSALIS_API_URL}/aggregated/${dataCenter}/${itemId}`
-    );
-    res.json(response.data);
+    const data = await fetchAggregatedMarketData(dataCenter, itemId);
+    res.json(data);
   } catch (error: any) {
-    console.error(
-      "Error fetching market data:",
-      error.response?.data || error.message
-    );
-    res.status(500).json({ error: "Failed to fetch market data" });
+    handleError(res, error, "Failed to fetch market data");
   }
 };
 
@@ -33,21 +28,14 @@ export const getWorldMarketData = async (
 ): Promise<void> => {
   try {
     const { itemId, world } = req.params;
-
     if (!itemId || !world) {
       res.status(400).json({ error: "Item ID and World are required" });
       return;
     }
-    const response = await axios.get(
-      `${UNIVERSALIS_API_URL}/${world}/${itemId}`
-    );
-    res.json(response.data);
+    const data = await fetchMarketData(world, itemId);
+    res.json(data);
   } catch (error: any) {
-    console.error(
-      "Error fetching market data:",
-      error.response?.data || error.message
-    );
-    res.status(500).json({ error: "Failed to fetch market data" });
+    handleError(res, error, "Failed to fetch market data");
   }
 };
 
@@ -58,17 +46,36 @@ export const getArbitrageData = async (
   try {
     const { sellWorld, itemId } = req.params;
     const buyWorldsParam = req.query.buyWorlds as string;
-
     if (!itemId || !buyWorldsParam || !sellWorld) {
       res.status(400).json({
-        error: "Item ID, buyWorlds, and sellWorld are required",
+        error:
+          "Item ID, buyWorlds, and sellWorld are required. Use /arbitrage/:sellWorld/:itemId?buyWorlds=world1,world2",
       });
       return;
     }
     const buyWorlds = buyWorldsParam.split(",").map((world) => world.trim());
-    const buyPrices = await fetchPricesForWorlds(itemId, buyWorlds);
-    const sellPriceData = await fetchPriceForWorld(sellWorld, itemId);
-    if (buyPrices.length === 0 || !sellPriceData) {
+    const buyPrices: { world: string; price: number }[] = [];
+    for (const world of buyWorlds) {
+      try {
+        const data = await fetchMarketData(world, itemId);
+        if (data.listings && data.listings.length > 0) {
+          const lowestPrice = data.listings[0].pricePerUnit;
+          buyPrices.push({ world, price: lowestPrice });
+        }
+      } catch (error: any) {
+        console.error(
+          `Error fetching data for world ${world}:`,
+          error.response?.data || error.message
+        );
+        continue;
+      }
+    }
+    const sellData = await fetchMarketData(sellWorld, itemId);
+    if (
+      buyPrices.length === 0 ||
+      !sellData?.listings ||
+      sellData.listings.length === 0
+    ) {
       res.status(404).json({
         error: "Insufficient market data to calculate arbitrage",
       });
@@ -80,7 +87,8 @@ export const getArbitrageData = async (
         bestBuy = data;
       }
     }
-    if (sellPriceData.price <= bestBuy.price) {
+    const sellPrice = sellData.listings[0].pricePerUnit;
+    if (sellPrice <= bestBuy.price) {
       res.status(200).json({
         message: "No profitable arbitrage opportunity available",
       });
@@ -88,20 +96,14 @@ export const getArbitrageData = async (
     }
     const arbitrageOpportunity = {
       sellWorld: sellWorld,
-      sellPrice: sellPriceData.price,
+      sellPrice: sellPrice,
       buyWorld: bestBuy.world,
       buyPrice: bestBuy.price,
-      profit: sellPriceData.price - bestBuy.price,
+      profit: sellPrice - bestBuy.price,
     };
     res.json(arbitrageOpportunity);
   } catch (error: any) {
-    console.error(
-      "Error fetching arbitrage data:",
-      error.response?.data || error.message
-    );
-    res.status(500).json({
-      error: error.response?.data || "Failed to fetch arbitrage data",
-    });
+    handleError(res, error, "Failed to fetch arbitrage data");
   }
 };
 
@@ -118,15 +120,18 @@ export const getArbitrageDataDC = async (
       });
       return;
     }
-    const buyData = await fetchPriceForWorld(buyDataCenter, itemId);
-    const sellData = await fetchPriceForWorld(sellWorld, itemId);
-    if (!buyData || !sellData) {
+    const buyData = await fetchMarketData(buyDataCenter, itemId);
+    const sellData = await fetchMarketData(sellWorld, itemId);
+
+    if (!buyData?.listings?.length || !sellData?.listings?.length) {
       res.status(404).json({
         error: "Insufficient market data to calculate arbitrage",
       });
       return;
     }
-    if (sellData.price <= buyData.price) {
+    const buyPrice = buyData.listings[0].pricePerUnit;
+    const sellPrice = sellData.listings[0].pricePerUnit;
+    if (sellPrice <= buyPrice) {
       res.status(200).json({
         message: "No profitable arbitrage opportunity available",
       });
@@ -135,69 +140,13 @@ export const getArbitrageDataDC = async (
     const arbitrageOpportunity = {
       buyDataCenter: buyDataCenter,
       sellWorld: sellWorld,
-      sellPrice: sellData.price,
-      buyWorld: buyData.worldName,
-      buyPrice: buyData.price,
-      profit: sellData.price - buyData.price,
+      sellPrice: sellPrice,
+      buyWorld: buyData.listings[0].worldName,
+      buyPrice: buyPrice,
+      profit: sellPrice - buyPrice,
     };
     res.json(arbitrageOpportunity);
   } catch (error: any) {
-    console.error(
-      "Error fetching arbitrage data for data center:",
-      error.response?.data || error.message
-    );
-    res.status(500).json({
-      error: error.response?.data || "Failed to fetch arbitrage data",
-    });
-  }
-};
-
-const fetchPricesForWorlds = async (
-  itemId: string,
-  worlds: string[]
-): Promise<{ world: string; price: number }[]> => {
-  const prices: { world: string; price: number }[] = [];
-  for (const world of worlds) {
-    try {
-      const response = await axios.get(
-        `${UNIVERSALIS_API_URL}/${world}/${itemId}`
-      );
-      const data = response.data;
-      if (data.listings && data.listings.length > 0) {
-        const lowestPrice = data.listings[0].pricePerUnit;
-        prices.push({ world, price: lowestPrice });
-      }
-    } catch (error: any) {
-      console.error(
-        `Error fetching data for world ${world}:`,
-        error.response?.data || error.message
-      );
-      continue;
-    }
-  }
-  return prices;
-};
-
-const fetchPriceForWorld = async (
-  world: string,
-  itemId: string
-): Promise<{ worldName: string; price: number } | null> => {
-  try {
-    const response = await axios.get(
-      `${UNIVERSALIS_API_URL}/${world}/${itemId}`
-    );
-    const data = response.data;
-    if (data.listings && data.listings.length > 0) {
-      const price = data.listings[0].pricePerUnit;
-      const worldName = data.listings[0].worldName;
-      return { worldName, price };
-    }
-    return null;
-  } catch (error: any) {
-    console.error(
-      `Error fetching data for sell world ${world}:`,
-      error.response?.data || error.message
-    );
-    return null;
+    handleError(res, error, "Failed to fetch arbitrage data");
   }
 };
