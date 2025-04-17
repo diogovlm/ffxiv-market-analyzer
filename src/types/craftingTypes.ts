@@ -8,5 +8,6 @@ export interface Ingredient {
 export interface RecipeDetail {
   recipeId: string;
   isExpert: boolean;
+  quantityPerCraft: number;
   ingredients: Ingredient[];
 }

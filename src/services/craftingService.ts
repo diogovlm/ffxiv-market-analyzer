@@ -29,6 +29,7 @@ export const fetchRecipesPerItem = async (
   const result: RecipeDetail = {
     recipeId: itemId.toString(),
     isExpert: recipe.expert,
+    quantityPerCraft: recipe.yields,
     ingredients: recipe.ingredients.map((ing: any) => ({
       id: ing.id.toString(),
       quantity: ing.amount,
