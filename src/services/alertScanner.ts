@@ -2,11 +2,12 @@ import axios from "axios";
 import Bottleneck from "bottleneck";
 import { Alert } from "../models/Alert";
 import AlertToggle from "../models/AlertToggle";
-import { fetchMarketData } from "./marketService";
+import { fetchMarketData, fetchDataCenterMarketData } from "./marketService";
+import { getItemName } from "./itemNameService";
 
 interface ScanFilters {
   sellWorld?: string;
-  buyWorlds?: string[];
+  buyDataCenter?: string;
   minProfit?: number;
   batchSize?: number;
   startIndex?: number;
@@ -33,7 +34,7 @@ export const scanForAlerts = async (
 
   const {
     sellWorld = "Behemoth",
-    buyWorlds = ["Ultros", "Exodus", "Famfrit", "Brynhildr", "Malboro"],
+    buyDataCenter = "Primal",
     minProfit = 10000,
     batchSize = 100,
     startIndex = 0,
@@ -47,6 +48,8 @@ export const scanForAlerts = async (
     await limiter.schedule(async () => {
       try {
         let sellData;
+        let bestPrice = 0;
+        let bestWorld = sellWorld;
         try {
           sellData = await fetchMarketData(sellWorld, itemId);
         } catch (err: any) {
@@ -60,48 +63,22 @@ export const scanForAlerts = async (
         if (!sellData?.listings?.length) return;
 
         const sellPrice = sellData.listings[0].pricePerUnit;
-        const buyPrices: { world: string; price: number }[] = [];
 
-        for (const world of buyWorlds) {
-          try {
-            const data = await fetchMarketData(world, itemId);
-            if (data.listings?.length) {
-              buyPrices.push({ world, price: data.listings[0].pricePerUnit });
-            }
-          } catch (err: any) {
-            console.error(`⚠️ Error fetching ${world}:`, err.message);
-          }
-        }
-
-        if (!buyPrices.length) return;
-
-        const bestBuy = buyPrices.reduce(
-          (a, b) => (a.price < b.price ? a : b),
-          buyPrices[0]
-        );
-
-        const profit = sellPrice - bestBuy.price;
-        if (profit < minProfit) return;
-
-        let itemName = "Unknown";
         try {
-          const itemInfoRes = await axios.get(
-            `https://universalis.app/api/v2/items/${itemId}`
-          );
-          itemName = itemInfoRes.data?.itemName ?? "Unknown";
-        } catch (err: any) {
-          if (err.response?.status === 404) {
-            console.warn(
-              `Item name not found for item ${itemId}, using 'Unknown'`
-            );
-          } else {
-            console.error(
-              `Unexpected error fetching item name for ${itemId}:`,
-              err.message
-            );
-            throw err;
+          const data = await fetchDataCenterMarketData(buyDataCenter, itemId);
+          if (data.listings?.length) {
+            const worldName = data.listings[0].worldName ?? "Unknown";
+            bestPrice = data.listings[0].pricePerUnit;
+            bestWorld = worldName;
           }
+        } catch (err: any) {
+          console.error(`⚠️ Error fetching ${buyDataCenter}:`, err.message);
         }
+
+        const itemName = await getItemName(itemId);
+
+        const profit = sellPrice - bestPrice;
+        if (profit < minProfit) return;
 
         await Alert.findOneAndUpdate(
           { itemId },
@@ -109,8 +86,8 @@ export const scanForAlerts = async (
             itemId,
             itemName,
             sellWorld,
-            buyWorld: bestBuy.world,
-            buyPrice: bestBuy.price,
+            buyWorld: bestWorld,
+            buyPrice: bestPrice,
             sellPrice,
             profit,
             createdAt: new Date(),

@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import {
   fetchMarketData,
-  fetchAggregatedMarketData,
+  fetchDataCenterMarketData,
 } from "../services/marketService";
 import { handleError } from "../utils/errorHandler";
 
@@ -15,7 +15,7 @@ export const getDataCenterMarketData = async (
       res.status(400).json({ error: "Item ID and Data Center are required" });
       return;
     }
-    const data = await fetchAggregatedMarketData(dataCenter, itemId);
+    const data = await fetchDataCenterMarketData(dataCenter, itemId);
     res.json(data);
   } catch (error: any) {
     handleError(res, error, "Failed to fetch market data");
@@ -65,7 +65,7 @@ export const getArbitrageData = async (
       } catch (error: any) {
         console.error(
           `Error fetching data for world ${world}:`,
-          error.response?.data || error.message
+          error.response?.data ?? error.message
         );
         continue;
       }

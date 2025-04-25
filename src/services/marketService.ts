@@ -11,7 +11,7 @@ export const fetchMarketData = async (
   return response.data;
 };
 
-export const fetchAggregatedMarketData = async (
+export const fetchDataCenterMarketData = async (
   dataCenter: string,
   itemId: string
 ): Promise<UniversalisResponse> => {
