@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { scanForAlerts } from "../services/alertScanner";
 import { Alert } from "../models/Alert";
 import { handleError } from "../utils/errorHandler";
+import { getItemName } from "../services/itemNameService";
 import AlertToggle from "../models/AlertToggle";
 
 export const triggerAlertScan = async (
@@ -17,18 +18,23 @@ export const triggerAlertScan = async (
   }
 };
 
-export const getAlerts = async (
-  _req: Request,
-  res: Response
-): Promise<void> => {
+export const getAlerts = async (req: Request, res: Response) => {
   try {
-    const alerts = await Alert.find().sort({ profit: -1 });
-    res.json(alerts);
+    const alerts = await Alert.find().lean();
+
+    const enrichedAlerts = await Promise.all(
+      alerts.map(async (alert) => {
+        const itemName = await getItemName(alert.itemId);
+        return { ...alert, itemName };
+      })
+    );
+
+    res.json(enrichedAlerts);
   } catch (error: any) {
-    handleError(res, error, "Failed to fetch alerts");
+    console.error("Error fetching alerts:", error.message);
+    res.status(500).json({ message: "Internal server error" });
   }
 };
-
 export const getAlertToggle = async (
   req: Request,
   res: Response
@@ -59,12 +65,10 @@ export const setAlertToggle = async (
       { upsert: true, new: true }
     );
 
-    res
-      .status(200)
-      .json({
-        message: `Alert scanning ${enabled ? "enabled" : "disabled"}`,
-        toggle,
-      });
+    res.status(200).json({
+      message: `Alert scanning ${enabled ? "enabled" : "disabled"}`,
+      toggle,
+    });
   } catch (error) {
     console.error("Error setting alert toggle:", error);
     res.status(500).json({ error: "Internal server error" });
