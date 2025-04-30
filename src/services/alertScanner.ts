@@ -14,7 +14,7 @@ interface ScanFilters {
 }
 
 const limiter = new Bottleneck({
-  minTime: 50, // ~20 requests per second
+  minTime: 50, // ~20 req/s to respect Universalis API limits
   maxConcurrent: 8,
 });
 
@@ -47,38 +47,31 @@ export const scanForAlerts = async (
   for (const itemId of itemsToScan) {
     await limiter.schedule(async () => {
       try {
-        let sellData;
-        let bestPrice = 0;
-        let bestWorld = sellWorld;
-        try {
-          sellData = await fetchMarketData(sellWorld, itemId);
-        } catch (err: any) {
-          if (err.response?.status === 404) {
-            console.warn(`Skipping item ${itemId} - not found on Universalis`);
-            return;
-          }
-          throw err;
-        }
-
+        const sellData = await fetchMarketData(sellWorld, itemId);
         if (!sellData?.listings?.length) return;
 
         const sellPrice = sellData.listings[0].pricePerUnit;
 
+        let bestPrice = 0;
+        let bestWorld = sellWorld;
+
         try {
           const data = await fetchDataCenterMarketData(buyDataCenter, itemId);
           if (data.listings?.length) {
-            const worldName = data.listings[0].worldName ?? "Unknown";
             bestPrice = data.listings[0].pricePerUnit;
-            bestWorld = worldName;
+            bestWorld = data.listings[0].worldName ?? "Unknown";
           }
         } catch (err: any) {
-          console.error(`⚠️ Error fetching ${buyDataCenter}:`, err.message);
+          console.warn(
+            `⚠️ Failed to fetch data center ${buyDataCenter} for item ${itemId}: ${err.message}`
+          );
+          return;
         }
-
-        const itemName = await getItemName(itemId);
 
         const profit = sellPrice - bestPrice;
         if (profit < minProfit) return;
+
+        const itemName = await getItemName(itemId);
 
         await Alert.findOneAndUpdate(
           { itemId },
@@ -96,10 +89,14 @@ export const scanForAlerts = async (
         );
 
         console.log(
-          `💰 Alert saved for item ${itemId} (${itemName}): Profit ${profit}`
+          `💰 Alert saved for ${itemName} (ID: ${itemId}) | Profit: ${profit}`
         );
       } catch (error: any) {
-        console.error(`Error scanning item ${itemId}:`, error.message);
+        if (error.response?.status === 404) {
+          console.warn(`⚠️ Skipping item ${itemId} - not found on Universalis`);
+        } else {
+          console.error(`❌ Error scanning item ${itemId}:`, error.message);
+        }
       }
     });
   }

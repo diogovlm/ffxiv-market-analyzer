@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { fetchRecipesPerItem } from "../services/craftingService";
-import { handleError } from "../utils/errorHandler";
+import { sendSuccess, sendError } from "../utils/apiResponse";
 
 export const getCraftingRecipes = async (
   req: Request,
@@ -9,18 +9,16 @@ export const getCraftingRecipes = async (
   try {
     const { itemId } = req.params;
     if (!itemId) {
-      res.status(400).json({ error: "Item ID is required" });
+      sendError(res, null, "Item ID is required", 400);
       return;
     }
 
     const recipes = await fetchRecipesPerItem(itemId);
-
-    res.json(recipes);
+    sendSuccess(res, recipes);
   } catch (error: any) {
-    if (error.message.includes("No recipes found")) {
-      handleError(res, error, error.message);
-    } else {
-      handleError(res, error, "Failed to fetch crafting recipes");
-    }
+    const msg = error.message.includes("No recipes found")
+      ? error.message
+      : "Failed to fetch crafting recipes";
+    sendError(res, error, msg);
   }
 };
